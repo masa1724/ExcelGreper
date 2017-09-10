@@ -1,0 +1,251 @@
+VERSION 1.0 CLASS
+BEGIN
+  MultiUse = -1  'True
+END
+Attribute VB_Name = "Sheet1"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = True
+Option Explicit
+Private Const MODULE_NAME As String = "main"
+
+'------------------------------------------------
+' シート名
+'------------------------------------------------
+' メイン
+Private Const SHEET_MAIN As String = "main"
+' Grep結果
+Private Const SHEET_RESULT_TMPL As String = "result_template"
+
+'------------------------------------------------
+' セルのアドレス
+'------------------------------------------------
+' 検索キーワード
+Private Const CELL_KEYWORD As String = "main!B1"
+' 検索対象のファイルパス
+Private Const CELL_FILEPATH_OR_DIRPATH As String = "main!B2"
+' 正規表現の使用有無
+Private Const CELL_IS_REGEXP As String = "main!B2"
+
+'------------------------------------------------
+' Grep結果シートのセルのアドレス
+'------------------------------------------------
+' Grep結果を代入する基点行
+Private Const RESULT_SHEET_ROOT_ROW As Integer = 8
+' Grep結果を代入する基点列
+Private Const RESULT_SHEET_ROOT_COLUMN As Integer = 1
+
+'------------------------------------------------
+' チェックボックス名
+'------------------------------------------------
+' 大文字小文字を区別するか
+Private Const CHKBOX_IS_IGNORE_CASE As String = "CHKBOX_IS_IGNORE_CASE"
+' 正規表現を使用するか
+Private Const CHKBOX_IS_USE_REGEXP As String = "CHKBOX_IS_USE_REGEXP"
+' サブフォルダを検索するか
+Private Const CHKBOX_IS_RECURSIVE_SEARCH As String = "CHKBOX_IS_RECURSIVE_SEARCH"
+
+' Grep結果を表示するテキストボックス
+Private Const SHAPE_RESULT_TXT_BOX As String = "RESULT_TXT_BOX"
+
+'
+' 「検索ボタン」押下時のイベント処理を行います.
+'
+Private Sub CommandButton1_Click()
+    On Error GoTo ErrHandler
+
+    Dim keyword As String
+    Dim filePathOrDirPath As String
+    Dim isIgnoreCase As Boolean
+    Dim isUseRegExp As Boolean
+    Dim isRecursiveSearch As Boolean
+
+    Dim filePaths As Collection
+    Dim resultList As Collection
+
+    ' 入力値を取得
+    keyword = Range(CELL_KEYWORD).Value
+    filePathOrDirPath = Range(CELL_FILEPATH_OR_DIRPATH).Value
+    isIgnoreCase = Not GetCheckBoxValue(SHEET_MAIN, CHKBOX_IS_IGNORE_CASE)
+    isUseRegExp = GetCheckBoxValue(SHEET_MAIN, CHKBOX_IS_USE_REGEXP)
+    isRecursiveSearch = GetCheckBoxValue(SHEET_MAIN, CHKBOX_IS_RECURSIVE_SEARCH)
+
+    ' ファイル一覧を取得
+    Set filePaths = GetFilePaths(filePathOrDirPath, isRecursiveSearch)
+
+    If filePaths.Count = 0 Then
+        MsgBox "検索対象のファイルは0件です。", vbOKOnly + vbCritical, ""
+        Exit Sub
+    End If
+
+    ' Grep結果を取得
+    Set resultList = Grep(keyword, filePaths, isIgnoreCase, isUseRegExp)
+
+    If resultList.Count = 0 Then
+        MsgBox "該当のファイルは0件です。", vbOKOnly + vbCritical, ""
+        Exit Sub
+    End If
+
+    WriteResult resultList, keyword, filePathOrDirPath, isIgnoreCase, isUseRegExp, isRecursiveSearch
+
+    MsgBox resultList.Count & "件見つかりました。", vbOKOnly, ""
+
+    Exit Sub
+ErrHandler:
+    MsgBox "ファイル検索中にエラーが発生しました。" & vbCrLf & Err.Description, vbOKOnly + vbCritical, ""
+    Debug.Print "----- Source ------" & vbCrLf & Err.Source & vbCrLf & _
+                "----- Description ------" & vbCrLf & Err.Description & vbCrLf & _
+                "----- Number ------" & vbCrLf & Err.Number
+End Sub
+
+'
+' 検索対象のファイルパスリストを取得します.
+'
+' @param filePathOrDirPath 検索対象のファイルパス/ディレクトリパス
+' @param isRecursiveSearch サブディレクトリも再帰的に検索するか
+' @result Grep結果リスト
+'
+Private Function GetFilePaths(ByVal filePathOrDirPath As String, ByVal isRecursiveSearch As Boolean) As Collection
+    On Error GoTo ErrHandler
+
+    Dim fso As FileSystemObject
+    Dim fsoex As FileSystemObjectExtract
+    Dim fileType As String
+    Dim filePaths As Collection
+    Dim extensions As Collection
+
+    ' 検索対象のファイル一覧を取得
+    Set fso = New FileSystemObject
+    Set fsoex = New FileSystemObjectExtract
+    fsoex.Initialize fso
+
+    ' ファイルかディレクトリか判定
+    fileType = fsoex.GetFilePathType(filePathOrDirPath)
+
+    ' ファイルの場合は1ファイルのみ検索を行う
+    If fileType = FILE_PATH_TYPE_FILE Then
+        Set filePaths = New Collection
+        filePaths.Add filePathOrDirPath
+        ' ディレクトリの場合は、フォルダ配下のExcelファイル全てを対象に検索を行う
+    ElseIf fileType = FILE_PATH_TYPE_DIRECTORY Then
+        Set extensions = New Collection
+        extensions.Add ("xls")
+        extensions.Add ("xlsx")
+        Set filePaths = fsoex.GetFilePaths(filePathOrDirPath, extensions, isRecursiveSearch)
+    Else
+        MsgBox filePathOrDirPath & "は存在しません。", vbOKOnly + vbCritical, ""
+        Exit Function
+    End If
+
+    Set GetFilePaths = filePaths
+    Exit Function
+ErrHandler:
+    ThrowError Err, MODULE_NAME, "GetFilePaths"
+End Function
+
+'
+' Grep検索を実行し、検索結果を返します.
+'
+' @param keyword 検索キーワード
+' @param filePaths 検索対象のファイルパスリスト
+' @param isIgnoreCase 大文字小文字を区別するか
+' @param isUseRegExp 正規表現の使用有無
+' @result Grep結果リスト
+'
+Private Function Grep(ByRef keyword As String, ByRef filePaths As Collection, ByVal isIgnoreCase As Boolean, ByVal isUseRegExp As Boolean) As Collection
+    On Error GoTo ErrHandler
+
+    Dim greper As ExcelGreper
+    Set greper = New ExcelGreper
+
+    greper.Initialize keyword, filePaths, isIgnoreCase, isUseRegExp
+    Set Grep = greper.Execute()
+
+    Exit Function
+ErrHandler:
+    ThrowError Err, MODULE_NAME, "Grep"
+End Function
+
+'
+' Grep結果を別シートに出力します.
+'
+' @param resultList Grep結果リスト
+' @param keyword 検索キーワード
+' @param filePath Grepを行ったファイルのパス
+'
+Private Sub WriteResult(ByRef resultList As Collection, _
+                        ByRef keyword As String, _
+                        ByRef filePathOrDirPath As String, _
+                        ByVal isIgnoreCase As Boolean, _
+                        ByVal isUseRegExp As Boolean, _
+                        ByVal isRecursiveSearch As Boolean)
+    On Error GoTo ErrHandler
+
+    Dim result As GrepResult
+    Dim tmpArr() As Variant
+    Dim i As Integer
+    Dim objName As String
+    Dim printRngStr As String
+    Dim printRng As Range
+    Dim copyedSheet As Worksheet
+    Dim resultTxtBox As shape
+    Dim resultTxt As String
+
+    ' Grep結果リストを2次元配列へ変換
+    ReDim tmpArr(resultList.Count, GREP_RESULT_COLUMN_COUNT - 1)
+    For i = 0 To resultList.Count - 1
+        objName = ObjectTypeToName(resultList(i + 1).objectType)
+
+        tmpArr(i, 0) = i + 1
+        tmpArr(i, 1) = resultList(i + 1).FilePath
+        tmpArr(i, 2) = objName
+        tmpArr(i, 3) = resultList(i + 1).CellAddress
+        tmpArr(i, 4) = resultList(i + 1).Text
+    Next
+
+    ' テンプレートのシートをコピー
+    ThisWorkbook.Worksheets(SHEET_RESULT_TMPL).Copy after:=ThisWorkbook.Worksheets(Worksheets.Count)
+    Set copyedSheet = ThisWorkbook.Worksheets(Worksheets.Count)
+    copyedSheet.Name = Format(Now, "yyyymmdd_hhmmss") & "_result"
+
+    ' Grep結果をテキストボックスのテキストへ代入
+    resultTxt = "Grepキーワード : " & keyword & vbCrLf
+    resultTxt = resultTxt & "ファイル/ディレクトリパス    : " & filePathOrDirPath & vbCrLf
+
+    If Not isIgnoreCase Then
+        resultTxt = resultTxt & "大文字小文字を区別する" & vbCrLf
+    End If
+
+    If isUseRegExp Then
+        resultTxt = resultTxt & "正規表現を使用する" & vbCrLf
+    End If
+
+    If isRecursiveSearch Then
+        resultTxt = resultTxt & "サブフォルダも検索する" & vbCrLf
+    End If
+
+    resultTxt = resultTxt & vbCrLf & resultList.Count & "件見つかりました｡"
+    Set resultTxtBox = copyedSheet.Shapes(SHAPE_RESULT_TXT_BOX)
+    resultTxtBox.TextFrame.Characters.Text = resultTxt
+
+    ' Grep結果を代入するセル範囲を取得
+    With copyedSheet
+        Set printRng = _
+        .Range( _
+        .Cells(RESULT_SHEET_ROOT_ROW, RESULT_SHEET_ROOT_COLUMN), _
+                       .Cells(RESULT_SHEET_ROOT_ROW + resultList.Count - 1, GREP_RESULT_COLUMN_COUNT))
+
+        .Visible = xlSheetVisible
+    End With
+
+    ' セルへ一括代入
+    printRng = tmpArr
+
+    ' 罫線を描画
+    printRng.Borders.LineStyle = xlContinuous
+
+    Exit Sub
+ErrHandler:
+    ThrowError Err, MODULE_NAME, "WriteResult"
+End Sub
