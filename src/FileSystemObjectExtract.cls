@@ -95,13 +95,13 @@ End Function
 ' @param col ファイルパスリスト
 ' @return true:ファイルが開かれている, false:ファイルが開かれていない
 '
-Public Function GetSubFolder(ByVal dirPath As String, ByRef col As Collection) As Collection
+Private Function GetSubFolder(ByVal dirPath As String, ByRef col As Collection) As Collection
     On Error GoTo ErrHandler
 
     Dim f As Variant
 
     ' ルートディレクトリ用
-    If col.Count = 0 Then
+    If col.count = 0 Then
         col.Add dirPath
     End If
 

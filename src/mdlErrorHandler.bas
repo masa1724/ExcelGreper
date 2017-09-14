@@ -1,15 +1,28 @@
 Attribute VB_Name = "mdlErrorHandler"
 
-    Public Sub ThrowError(ByRef preSource As String, _
-            ByRef preDescription As String, _
-            ByRef preHelpContext As String, _
-            ByRef preHelpFile As String, _
+Public Sub ThrowError(ByRef preErr As ErrObject, _
                       ByRef moduleName As String, _
                       ByRef methodName As String)
-    preError.Clear
+    Dim preSource As String
+    Dim preNumber As Integer
+    Dim preDescription As String
+    Dim preHelpContext As String
+    Dim preHelpFile As String
+    'Dim preLastDllError As Integer
 
-    Error.Raise Source:=moduleName & "." & methodName & vbCrLf & preSource, _
-                Description:=preDescription, _
-                HelpContext:=preHelpContext, _
-                HelpFile:=preHelpFile
+    preSource = preErr.Source
+    preNumber = preErr.Number
+    preDescription = preErr.Description
+    preHelpContext = preErr.HelpContext
+    preHelpFile = preErr.HelpFile
+    'preLastDllError = preErr.LastDllError
+
+    Err.Clear
+
+    Err.Raise Source:=moduleName & "." & methodName & vbCrLf & preSource, _
+              Number:=preNumber, _
+              Description:=preDescription, _
+              HelpContext:=preHelpContext, _
+              HelpFile:=preHelpFile
+              'LastDllError:=preLastDllError
 End Sub

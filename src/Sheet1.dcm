@@ -15,8 +15,10 @@ Private Const MODULE_NAME As String = "main"
 '------------------------------------------------
 ' メイン
 Private Const SHEET_MAIN As String = "main"
-' Grep結果
+' Grep結果テンプレート
 Private Const SHEET_RESULT_TMPL As String = "result_template"
+' Grep結果テンプレート(2カラム)
+Private Const SHEET_RESULT_TMPL_TWO_COLUMN As String = "result_template2"
 
 '------------------------------------------------
 ' セルのアドレス
@@ -35,6 +37,8 @@ Private Const CELL_IS_REGEXP As String = "main!B2"
 Private Const RESULT_SHEET_ROOT_ROW As Integer = 8
 ' Grep結果を代入する基点列
 Private Const RESULT_SHEET_ROOT_COLUMN As Integer = 1
+' Grep結果を代入する基点列
+Private Const RESULT_SHEET_ROOT_COLUMN2 As Integer = 7
 
 '------------------------------------------------
 ' チェックボックス名
@@ -48,6 +52,12 @@ Private Const CHKBOX_IS_RECURSIVE_SEARCH As String = "CHKBOX_IS_RECURSIVE_SEARCH
 
 ' Grep結果を表示するテキストボックス
 Private Const SHAPE_RESULT_TXT_BOX As String = "RESULT_TXT_BOX"
+
+' Grep結果の件数が多い場合に警告表示する件数
+Private Const WARNING_ALERT_COUNT As Long = 10000
+
+' VBAのInteger最大値
+Private Const VBA_INTEGER_MAX As Integer = 32767
 
 '
 ' 「検索ボタン」押下時のイベント処理を行います.
@@ -64,6 +74,8 @@ Private Sub CommandButton1_Click()
     Dim filePaths As Collection
     Dim resultList As Collection
 
+    Dim yesNo As Integer
+
     ' 入力値を取得
     keyword = Range(CELL_KEYWORD).Value
     filePathOrDirPath = Range(CELL_FILEPATH_OR_DIRPATH).Value
@@ -74,7 +86,7 @@ Private Sub CommandButton1_Click()
     ' ファイル一覧を取得
     Set filePaths = GetFilePaths(filePathOrDirPath, isRecursiveSearch)
 
-    If filePaths.Count = 0 Then
+    If filePaths.count = 0 Then
         MsgBox "検索対象のファイルは0件です。", vbOKOnly + vbCritical, ""
         Exit Sub
     End If
@@ -82,21 +94,29 @@ Private Sub CommandButton1_Click()
     ' Grep結果を取得
     Set resultList = Grep(keyword, filePaths, isIgnoreCase, isUseRegExp)
 
-    If resultList.Count = 0 Then
+    If resultList.count = 0 Then
         MsgBox "該当のファイルは0件です。", vbOKOnly + vbCritical, ""
         Exit Sub
     End If
 
+    If resultList.count >= WARNING_ALERT_COUNT Then
+        yesNo = MsgBox("検索結果件数が1万件を超えますが、処理を継続しますか？" & vbCrLf & "処理件数：" & resultList.count, vbYesNo + vbExclamation, "")
+        If yesNo <> vbYes Then
+            MsgBox "処理を中断しました。"
+            Exit Sub
+        End If
+    End If
+
     WriteResult resultList, keyword, filePathOrDirPath, isIgnoreCase, isUseRegExp, isRecursiveSearch
 
-    MsgBox resultList.Count & "件見つかりました。", vbOKOnly, ""
+    MsgBox resultList.count & "件見つかりました。", vbOKOnly, ""
 
     Exit Sub
 ErrHandler:
     MsgBox "ファイル検索中にエラーが発生しました。" & vbCrLf & Err.Description, vbOKOnly + vbCritical, ""
-    Debug.Print "----- Source ------" & vbCrLf & Err.Source & vbCrLf & _
-                "----- Description ------" & vbCrLf & Err.Description & vbCrLf & _
-                "----- Number ------" & vbCrLf & Err.Number
+    Debug.Print "Source: " & Err.Source & vbCrLf & _
+                "Description: " & Err.Description & vbCrLf & _
+                "Number: " & Err.Number
 End Sub
 
 '
@@ -181,32 +201,24 @@ Private Sub WriteResult(ByRef resultList As Collection, _
                         ByVal isUseRegExp As Boolean, _
                         ByVal isRecursiveSearch As Boolean)
     On Error GoTo ErrHandler
-
-    Dim result As GrepResult
-    Dim tmpArr() As Variant
-    Dim i As Integer
-    Dim objName As String
-    Dim printRngStr As String
-    Dim printRng As Range
+    
     Dim copyedSheet As Worksheet
     Dim resultTxtBox As shape
     Dim resultTxt As String
+    
+    Dim useTmpl2 As Boolean
+    Dim tmplSheetName As String
 
-    ' Grep結果リストを2次元配列へ変換
-    ReDim tmpArr(resultList.Count, GREP_RESULT_COLUMN_COUNT - 1)
-    For i = 0 To resultList.Count - 1
-        objName = ObjectTypeToName(resultList(i + 1).objectType)
-
-        tmpArr(i, 0) = i + 1
-        tmpArr(i, 1) = resultList(i + 1).FilePath
-        tmpArr(i, 2) = objName
-        tmpArr(i, 3) = resultList(i + 1).CellAddress
-        tmpArr(i, 4) = resultList(i + 1).Text
-    Next
-
+    If resultList.count > VBA_INTEGER_MAX Then
+        useTmpl2 = True
+        tmplSheetName = SHEET_RESULT_TMPL_TWO_COLUMN
+    Else
+        tmplSheetName = SHEET_RESULT_TMPL
+    End If
+    
     ' テンプレートのシートをコピー
-    ThisWorkbook.Worksheets(SHEET_RESULT_TMPL).Copy after:=ThisWorkbook.Worksheets(Worksheets.Count)
-    Set copyedSheet = ThisWorkbook.Worksheets(Worksheets.Count)
+    ThisWorkbook.Worksheets(tmplSheetName).Copy after:=ThisWorkbook.Worksheets(Worksheets.count)
+    Set copyedSheet = ThisWorkbook.Worksheets(Worksheets.count)
     copyedSheet.Name = Format(Now, "yyyymmdd_hhmmss") & "_result"
 
     ' Grep結果をテキストボックスのテキストへ代入
@@ -225,27 +237,126 @@ Private Sub WriteResult(ByRef resultList As Collection, _
         resultTxt = resultTxt & "サブフォルダも検索する" & vbCrLf
     End If
 
-    resultTxt = resultTxt & vbCrLf & resultList.Count & "件見つかりました｡"
+    resultTxt = resultTxt & vbCrLf & resultList.count & "件見つかりました｡"
     Set resultTxtBox = copyedSheet.Shapes(SHAPE_RESULT_TXT_BOX)
     resultTxtBox.TextFrame.Characters.Text = resultTxt
 
-    ' Grep結果を代入するセル範囲を取得
-    With copyedSheet
+    '
+    If useTmpl2 Then
+        Dim resultArray1() As String
+        Dim resultArray2() As String
+                            
+        resultArray1 = ToArray(resultList, _
+                               1, _
+                               Rows.count - RESULT_SHEET_ROOT_ROW + 1, _
+                               GREP_RESULT_COLUMN_COUNT)
+        
+        PrintResult copyedSheet, resultArray1, _
+                    RESULT_SHEET_ROOT_ROW, _
+                    RESULT_SHEET_ROOT_COLUMN, _
+                    Rows.count, _
+                    GREP_RESULT_COLUMN_COUNT
+                    
+        resultArray2 = ToArray(resultList, _
+                               Rows.count - RESULT_SHEET_ROOT_ROW + 2, _
+                               resultList.count, _
+                               GREP_RESULT_COLUMN_COUNT)
+        
+        PrintResult copyedSheet, resultArray2, _
+                    RESULT_SHEET_ROOT_ROW, _
+                    RESULT_SHEET_ROOT_COLUMN2, _
+                    resultList.count - Rows.count + RESULT_SHEET_ROOT_ROW + RESULT_SHEET_ROOT_ROW - 2, _
+                    RESULT_SHEET_ROOT_COLUMN2 + GREP_RESULT_COLUMN_COUNT - 1
+    Else
+        Dim resultArray() As String
+        resultArray = ToArray(resultList, _
+                              1, _
+                              resultList.count, _
+                              GREP_RESULT_COLUMN_COUNT)
+                              
+        PrintResult copyedSheet, resultArray, _
+                    RESULT_SHEET_ROOT_ROW, _
+                    RESULT_SHEET_ROOT_COLUMN, _
+                    RESULT_SHEET_ROOT_ROW + resultList.count - 1, _
+                    GREP_RESULT_COLUMN_COUNT
+    End If
+
+    copyedSheet.Visible = xlSheetVisible
+    Exit Sub
+ErrHandler:
+    ' エラー起きたらコピーしたシートを削除する
+    Dim sh As Worksheet
+    If Not copyedSheet Is Nothing Then
+        For Each sh In ThisWorkbook.Worksheets
+            If sh.Name = copyedSheet.Name Then
+                Application.DisplayAlerts = False
+                copyedSheet.Delete
+                Application.DisplayAlerts = True
+            End If
+        Next
+    End If
+    ThrowError Err, MODULE_NAME, "WriteResult"
+End Sub
+
+Private Function ToArray(ByRef resultList As Collection, _
+                    ByVal startIdx As Long, _
+                    ByVal endIdx As Long, _
+                    ByVal colCount As Long) As String()
+                    
+    Dim result As GrepResult
+    Dim tmpArr() As String
+    Dim i As Long
+    Dim objName As String
+    
+    Dim idx As Long
+    idx = 0
+    
+    ' Grep結果リストを2次元配列へ変換
+    ReDim tmpArr(endIdx - startIdx, colCount - 1)
+    For i = startIdx To endIdx
+        objName = ObjectTypeToName(resultList(i).objectType)
+
+        tmpArr(idx, 0) = Str(i)
+        tmpArr(idx, 1) = resultList(i).FilePath
+        tmpArr(idx, 2) = objName
+        tmpArr(idx, 3) = resultList(i).CellAddress
+        tmpArr(idx, 4) = resultList(i).Text
+        
+        idx = idx + 1
+    Next
+    
+    ToArray = tmpArr
+    
+    Exit Function
+ErrHandler:
+    ThrowError Err, MODULE_NAME, "ToArray"
+End Function
+
+Private Sub PrintResult(ByRef printSheet As Worksheet, _
+                              ByRef resultArray() As String, _
+                              ByRef sRow As Long, _
+                              ByRef sCol As Long, _
+                              ByRef eRow As Long, _
+                              ByRef eCol As Long)
+
+    Dim printRngStr As String
+    Dim printRng As Range
+    
+' Grep結果を代入するセル範囲を取得
+    With printSheet
         Set printRng = _
         .Range( _
-        .Cells(RESULT_SHEET_ROOT_ROW, RESULT_SHEET_ROOT_COLUMN), _
-                       .Cells(RESULT_SHEET_ROOT_ROW + resultList.Count - 1, GREP_RESULT_COLUMN_COUNT))
-
-        .Visible = xlSheetVisible
+            .Cells(sRow, sCol), _
+            .Cells(eRow, eCol))
     End With
 
     ' セルへ一括代入
-    printRng = tmpArr
+    printRng = resultArray
 
     ' 罫線を描画
     printRng.Borders.LineStyle = xlContinuous
-
+    printSheet.Columns("A:E").EntireColumn.AutoFit
     Exit Sub
 ErrHandler:
-    ThrowError Err, MODULE_NAME, "WriteResult"
+    ThrowError Err, MODULE_NAME, "PrintResult"
 End Sub

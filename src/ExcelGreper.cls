@@ -24,10 +24,10 @@ Private m_IsIgnoreCase As Boolean
 ' 正規表現の使用有無
 Private m_IsUseRegExp As Boolean
 
-' 正規表現
+' 正規表現オブジェクト
 Private m_RegExp As RegExp
 
-' InStr
+' InStr()で使用する文字列比較のタイプ
 Private m_Compare As Integer
 
 '
@@ -87,7 +87,7 @@ End Sub
 '
 ' Grep検索を実行します.
 '
-' @return resultList Grep結果リスト
+' @return Grep結果リスト
 '
 Public Function Execute() As Collection
     On Error GoTo ErrHandler
@@ -96,7 +96,6 @@ Public Function Execute() As Collection
     Dim sheet As Worksheet
     Dim resultList As Collection
     Dim FilePath As Variant
-    Dim bk As Workbook
 
     Set resultList = New Collection
 
@@ -116,10 +115,12 @@ Public Function Execute() As Collection
 
     Exit Function
 ErrHandler:
+    Dim bk As Workbook
     If Not book Is Nothing Then
         For Each bk In Workbooks
-            If bk.Name = book.Name Then
+            If bk.FullName = book.FullName Then
                 book.Close
+                Set book = Nothing
                 Exit For
             End If
         Next
@@ -140,8 +141,8 @@ Private Sub SearchCells(ByRef sheet As Worksheet, ByRef resultList As Collection
     On Error GoTo ErrHandler
 
     Dim usedRngValues As Variant
-    Dim i As Integer
-    Dim j As Integer
+    Dim i As Long
+    Dim j As Long
     Dim rowCnt As Long
     Dim colCnt As Long
     Dim Text As String
@@ -218,6 +219,7 @@ End Sub
 '
 ' @param text 検索キーワード
 ' @return true:検索キーワードが含まれる, false:検索キーワードが含まれない
+'
 Private Function IsHit(ByRef Text As String) As Boolean
     If Text = "" Then
         IsHit = False
